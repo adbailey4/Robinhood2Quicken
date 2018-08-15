@@ -11,10 +11,11 @@
 import sys
 import os
 import csv
+import argparse
 import numpy as np
 from timeit import default_timer as timer
+from datetime import datetime
 from Robinhood import Robinhood
-import argparse
 
 MINT_HEADERS = ("Date", "Description Original", "Description", "Amount", "Transaction Type", "Category", "Account Name",
                 "Labels", "Notes")
@@ -49,6 +50,10 @@ class CommandLine(object):
         self.parser.add_argument('--password', help='your Robinhood password', required=True)
         self.parser.add_argument('--trades', help='return trade information', required=False, default=True)
         self.parser.add_argument('--dividends', help='returns dividend information', required=False, default=True)
+        self.parser.add_argument('--date', help='filters to transactions after specific date: MM/DD/YYYY',
+                                 required=False, default=False)
+        self.parser.add_argument('--output', help='output file path. Must include .csv at the end of the file name',
+                                 required=False, default=False)
 
         # allow optional arguments not passed by the command line
         if in_opts is None:
@@ -86,7 +91,7 @@ def get_robinhood_trade_data(robinhood_api):
             price = order['executions'][0]['price']
             timestamp = order['executions'][0]['timestamp'].split("T")[0]
             data = dict(ticker=ticker, side=side, quantity=quantity,
-                        price=price, timestamp=timestamp, cost=float(price)*float(quantity))
+                        price=price, Date=timestamp, cost=float(price)*float(quantity))
             trade_data.append(data)
 
     return trade_data
@@ -105,7 +110,7 @@ def get_robinhood_dividend_data(robinhood_api):
             amount = dividend["amount"]
             payable_date = dividend["payable_date"]
             ticker = robinhood_api.get_custom_endpoint(dividend['instrument'])['symbol']
-            data = dict(amount=amount, payable_date=payable_date, ticker=ticker)
+            data = dict(amount=amount, Date=payable_date, ticker=ticker)
             dividend_data.append(data)
 
     return dividend_data
@@ -122,7 +127,7 @@ def parse_robinhood_data_to_mint(trade_data, dividend_data):
         # 5/18/2017,Investments:Dividend Income,Investments:Dividend Income,5.04,credit,Apple Inc,,,
 
         for line in trade_data:
-            mint_data.append({"Date": convert_robinhood_date(line["timestamp"]),
+            mint_data.append({"Date": convert_robinhood_date(line["Date"]),
                               "Description Original": line["ticker"],
                               "Description": "Investments:{}".format(line["side"]),
                               "Amount": np.round(float(line["cost"]), 2),
@@ -133,7 +138,7 @@ def parse_robinhood_data_to_mint(trade_data, dividend_data):
                               "Notes": line["price"]})
     if dividend_data:
         for line in dividend_data:
-            mint_data.append({"Date": convert_robinhood_date(line["payable_date"]),
+            mint_data.append({"Date": convert_robinhood_date(line["Date"]),
                               "Description Original": line["ticker"],
                               "Description": "Investments:Dividend Income",
                               "Amount": np.round(float(line["amount"]), 2),
@@ -174,6 +179,25 @@ def write_csv(header, data, output_path):
     return output_path
 
 
+def filter_by_date(date, data, key="Date"):
+    """Filter transaction/dividend data by specific date
+    :param date: MM/DD/YYYY formatted date
+    :param data: list of dictionaries. must have key in each dictionary
+    :param key: key for dictionary in data to compare with date
+    :return: filtered data
+    """
+    filtered_data = []
+    m, d, y = date.split("/")
+    filter_day = datetime(int(y), int(m), int(d))
+    for transaction in data:
+        m, d, y = transaction[key].split("/")
+        transaction_day = datetime(int(y), int(m), int(d))
+        if transaction_day > filter_day:
+            filtered_data.append(transaction)
+
+    return filtered_data
+
+
 def main():
     """Main docstring"""
     start = timer()
@@ -185,18 +209,31 @@ def main():
     robinhood_api_handle = Robinhood()
     logged_in = robinhood_api_handle.login(username=command_line.args["username"],
                                            password=command_line.args["password"])
+    # log in
     if not logged_in:
         command_line.do_usage_and_die("Username or Password is incorrect")
 
+    # decide to grab dividends and/or trades
     if command_line.args["dividends"]:
         dividend_data = get_robinhood_dividend_data(robinhood_api_handle)
 
     if command_line.args["trades"]:
         trade_data = get_robinhood_trade_data(robinhood_api_handle)
 
+    # convert into mint format
     mint_data = parse_robinhood_data_to_mint(trade_data, dividend_data)
-    write_csv(MINT_HEADERS, mint_data, "test_output.csv")
 
+    # if passed filter by date
+    if command_line.args["date"]:
+        mint_data = filter_by_date(command_line.args["date"], mint_data)
+
+    # if output is passed, use the path as the output file
+    if command_line.args["output"]:
+        write_csv(MINT_HEADERS, mint_data, command_line.args["output"])
+    else:
+        write_csv(MINT_HEADERS, mint_data, "robinhood_output.csv")
+
+    # keep track of how long everything takes
     stop = timer()
     print("export_mint_csv.py took {} seconds".format(stop - start), file=sys.stderr)
 
