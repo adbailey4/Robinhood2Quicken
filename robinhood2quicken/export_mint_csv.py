@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Create setup script for pip installation"""
+"""Export Robinhood trades to a Mint CSV file which can be imported into Quicken """
 ########################################################################
 # File: export_mint_csv.py
 #  executable: export_mint_csv.py
@@ -46,8 +46,8 @@ class CommandLine(object):
                                               usage='%(prog)s use "-h" for help')
 
         # get username and password
-        self.parser.add_argument('--username', help='your Robinhood username', required=True)
-        self.parser.add_argument('--password', help='your Robinhood password', required=True)
+        self.parser.add_argument('--username', help='your Robinhood username', default=None)
+        self.parser.add_argument('--password', help='your Robinhood password', default=None)
         self.parser.add_argument('--trades', help='return trade information', required=False, default=True)
         self.parser.add_argument('--dividends', help='returns dividend information', required=False, default=True)
         self.parser.add_argument('--date', help='filters to transactions after specific date: MM/DD/YYYY',
@@ -207,8 +207,12 @@ def main():
 
     command_line = CommandLine()
     robinhood_api_handle = Robinhood()
-    logged_in = robinhood_api_handle.login(username=command_line.args["username"],
-                                           password=command_line.args["password"])
+    if command_line.args["username"] is not None and command_line.args["password"] is not None:
+        logged_in = robinhood_api_handle.login(username=command_line.args["username"],
+                                               password=command_line.args["password"])
+    else:
+        logged_in = robinhood_api_handle.login_prompt()
+
     # log in
     if not logged_in:
         command_line.do_usage_and_die("Username or Password is incorrect")
